@@ -17,6 +17,7 @@ DEFAULT_RECONNECT_DELAY = 1  # 初始重连延迟（秒）
 MAX_RECONNECT_DELAY = 60  # 最大重连延迟（秒）
 DEFAULT_HEARTBEAT_INTERVAL = 30  # 心跳间隔（秒）
 CONNECTION_TIMEOUT = 10  # 连接超时（秒）
+COMMAND_RESPONSE_TIMEOUT = 30  # 命令执行结果等待超时（秒）
 
 
 class WebSocketClient:
@@ -52,6 +53,7 @@ class WebSocketClient:
         self._heartbeat_task: asyncio.Task | None = None
         self._session_id: str = ""
         self._server_info: ServerInfo | None = None
+        self._pending_command_requests: dict[str, asyncio.Future[MCMessage]] = {}
 
     @property
     def connected(self) -> bool:
@@ -85,8 +87,12 @@ class WebSocketClient:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = msg.json()
                 if data.get("type") == MessageType.CONNECTION_ACK.value:
-                    self._session_id = data.get("data", {}).get("sessionId", "")
-                    server_data = data.get("data", {}).get("serverInfo", {})
+                    payload = data.get("payload", {})
+                    self._session_id = payload.get("sessionId", "")
+                    server_data = dict(payload.get("serverInfo", {}) or {})
+                    server_data["protocolVersion"] = payload.get("protocolVersion", 0)
+                    server_data["apiVersion"] = payload.get("apiVersion", "")
+                    server_data["features"] = payload.get("features", [])
                     self._server_info = ServerInfo.from_dict(server_data)
                     self._connected = True
                     self._reconnect_delay = DEFAULT_RECONNECT_DELAY  # 成功后重置
@@ -115,6 +121,7 @@ class WebSocketClient:
         """关闭 WebSocket 连接"""
         self._running = False
         self._connected = False
+        self._fail_pending_commands("连接已断开")
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -159,6 +166,7 @@ class WebSocketClient:
                 logger.error(f"[MC-{self.server_id}] 接收循环异常: {e}")
             finally:
                 self._connected = False
+                self._fail_pending_commands("连接丢失")
                 if self._heartbeat_task:
                     self._heartbeat_task.cancel()
 
@@ -215,9 +223,20 @@ class WebSocketClient:
             self._connected = False
 
         elif msg.type == MessageType.ERROR:
+            if self._complete_pending_command(msg):
+                return
             code = msg.payload.get("code", 0)
             error_msg = msg.payload.get("message", "")
             logger.error(f"[MC-{self.server_id}] 错误 {code}: {error_msg}")
+
+        elif msg.type == MessageType.COMMAND_RESPONSE:
+            if self._complete_pending_command(msg):
+                return
+            if self.on_message:
+                try:
+                    await self.on_message(msg)
+                except Exception as e:
+                    logger.error(f"[MC-{self.server_id}] 消息处理器异常: {e}")
 
         else:
             # 转发到消息处理器
@@ -337,6 +356,7 @@ class WebSocketClient:
         command: str,
         executor: str = "CONSOLE",
         player_uuid: str | None = None,
+        target_server_id: str | None = None,
     ) -> bool:
         """发送命令执行请求"""
         msg = {
@@ -351,5 +371,88 @@ class WebSocketClient:
 
         if player_uuid:
             msg["payload"]["playerUuid"] = player_uuid
+        if target_server_id:
+            msg["payload"]["targetServerId"] = target_server_id
 
         return await self._send(msg)
+
+    async def execute_command(
+        self,
+        command: str,
+        executor: str = "CONSOLE",
+        player_uuid: str | None = None,
+        target_server_id: str | None = None,
+        timeout: int = COMMAND_RESPONSE_TIMEOUT,
+    ) -> tuple[bool, str, dict | None]:
+        """发送 COMMAND_REQUEST 并等待同 session 的结果。"""
+        if not self._connected:
+            return False, "WebSocket 未连接", None
+
+        request_id = str(uuid.uuid4())
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[MCMessage] = loop.create_future()
+        self._pending_command_requests[request_id] = future
+
+        msg = {
+            "type": MessageType.COMMAND_REQUEST.value,
+            "id": request_id,
+            "payload": {
+                "command": command,
+                "executor": executor,
+            },
+            "timestamp": int(time.time() * 1000),
+        }
+        if player_uuid:
+            msg["payload"]["playerUuid"] = player_uuid
+        if target_server_id:
+            msg["payload"]["targetServerId"] = target_server_id
+
+        if not await self._send(msg):
+            self._pending_command_requests.pop(request_id, None)
+            return False, "命令请求发送失败", None
+
+        try:
+            response = await asyncio.wait_for(future, timeout=timeout)
+        except TimeoutError:
+            self._pending_command_requests.pop(request_id, None)
+            return False, "等待命令执行结果超时", None
+        except Exception as e:
+            self._pending_command_requests.pop(request_id, None)
+            return False, str(e), None
+
+        payload = response.payload or {}
+        if response.type == MessageType.ERROR:
+            message = payload.get("detail") or payload.get("message") or "命令执行失败"
+            return False, message, payload
+
+        success = bool(payload.get("success", False))
+        output = (
+            payload.get("output")
+            or payload.get("errorMessage")
+            or payload.get("message")
+            or ("Command executed" if success else "命令执行失败")
+        )
+        return success, output, payload
+
+    def _complete_pending_command(self, msg: MCMessage) -> bool:
+        if not hasattr(self, "_pending_command_requests"):
+            self._pending_command_requests = {}
+        if not msg.reply_to:
+            return False
+        future = self._pending_command_requests.pop(msg.reply_to, None)
+        if future is None:
+            return False
+        if not future.done():
+            future.set_result(msg)
+        return True
+
+    def _fail_pending_commands(self, reason: str):
+        if not hasattr(self, "_pending_command_requests"):
+            self._pending_command_requests = {}
+        if not self._pending_command_requests:
+            return
+        pending = list(self._pending_command_requests.values())
+        self._pending_command_requests.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(ConnectionError(reason))

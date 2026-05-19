@@ -1,6 +1,7 @@
 """Minecraft 服务器通信的 REST API 客户端"""
 
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -145,10 +146,16 @@ class RestClient:
     # 玩家 APIs
 
     async def get_players(
-        self, page: int = 1, size: int = 20
+        self, detail: bool = False, include_offline: bool = False
     ) -> tuple[list[PlayerInfo], int, str]:
         """获取在线玩家列表"""
-        resp = await self._get("/players", params={"page": page, "size": size})
+        resp = await self._get(
+            "/players",
+            params={
+                "detail": str(detail).lower(),
+                "includeOffline": str(include_offline).lower(),
+            },
+        )
         if resp.success and resp.data:
             players = [PlayerInfo.from_dict(p) for p in resp.data.get("players", [])]
             total = resp.data.get("total", resp.data.get("count", len(players)))
@@ -157,7 +164,7 @@ class RestClient:
 
     async def get_player(self, identifier: str) -> tuple[PlayerDetail | None, str]:
         """通过 UUID 或名称获取玩家详细信息"""
-        resp = await self._get(f"/players/{identifier}")
+        resp = await self._get(f"/players/{quote(identifier, safe='')}")
         if resp.success and resp.data:
             return PlayerDetail.from_dict(resp.data), ""
         return None, resp.message
@@ -174,7 +181,7 @@ class RestClient:
         executor: str = "CONSOLE",
         player_uuid: str | None = None,
         is_async: bool = False,
-        target_server: str | None = None,
+        target_server_id: str | None = None,
     ) -> tuple[bool, str, Any]:
         """在服务器上执行命令
 
@@ -183,7 +190,7 @@ class RestClient:
             executor: 执行者 CONSOLE/PLAYER
             player_uuid: executor为PLAYER时指定
             is_async: 是否异步执行
-            target_server: 目标后端服务器名称（仅代理端有效）
+            target_server_id: 目标后端路由 ID（仅代理端有效）
 
         返回:
             tuple: (成功, 输出/错误消息, 原始数据)
@@ -195,8 +202,8 @@ class RestClient:
         }
         if player_uuid:
             json_data["playerUuid"] = player_uuid
-        if target_server:
-            json_data["targetServer"] = target_server
+        if target_server_id:
+            json_data["targetServerId"] = target_server_id
 
         resp = await self._post("/command/execute", json_data=json_data)
 

@@ -117,7 +117,7 @@ class CmdTarget:
 
     label: str  # display label
     server: object  # ServerConnection
-    target_server: str | None = None  # None = execute on proxy itself
+    target_server_id: str | None = None  # None = execute on proxy itself
 
 
 @dataclass
@@ -268,7 +268,7 @@ class CommandHandler:
 
             target = pending.cmd_targets[idx - 1]
             server = target.server
-            target_server = target.target_server
+            target_server_id = target.target_server_id
 
             # Auth check only for user-initiated cmd
             if action == "cmd":
@@ -279,7 +279,7 @@ class CommandHandler:
                     yield event.plain_result(deny_message)
                     return
             async for result in self._do_cmd(
-                event, server, args["command"], target_server=target_server
+                event, server, args["command"], target_server_id=target_server_id
             ):
                 yield result
         else:
@@ -394,8 +394,9 @@ class CommandHandler:
         cards: list[tuple[str, object, object]] = [(server_label, info, status)]
         if status.is_proxy and status.backends:
             for backend in status.backends:
+                backend_label = backend.display_name or backend.name or backend.id
                 backend_info = SimpleNamespace(
-                    name=backend.name,
+                    name=backend_label,
                     platform=backend.platform,
                     minecraft_version=backend.version,
                     online_count=backend.online_players,
@@ -420,7 +421,7 @@ class CommandHandler:
                     backends=[],
                 )
                 cards.append(
-                    (f"{server_label}/{backend.name}", backend_info, backend_status)
+                    (f"{server_label}/{backend_label}", backend_info, backend_status)
                 )
 
         return cards, ""
@@ -675,7 +676,7 @@ class CommandHandler:
         if len(targets) == 1:
             t = targets[0]
             async for result in self._do_cmd(
-                event, t.server, command, target_server=t.target_server
+                event, t.server, command, target_server_id=t.target_server_id
             ):
                 yield result
             return
@@ -696,18 +697,18 @@ class CommandHandler:
         event: AstrMessageEvent,
         server,
         command: str,
-        target_server: str | None = None,
+        target_server_id: str | None = None,
     ):
         """Pure command executor — sends command to server and yields result.
 
         No auth/permission checks here. Callers are responsible for
         cmd_enabled and whitelist/blacklist checks before calling.
         """
-        success, output, _ = await server.rest_client.execute_command(
-            command, target_server=target_server
+        success, output, _ = await server.ws_client.execute_command(
+            command, target_server_id=target_server_id
         )
 
-        target_label = f" [{target_server}]" if target_server else ""
+        target_label = f" [{target_server_id}]" if target_server_id else ""
         if success:
             yield event.plain_result(f"✅{target_label} 指令执行成功\n{output}")
         else:
@@ -850,17 +851,23 @@ class CommandHandler:
                 unknown_players.append(p)
 
         cards: list[tuple[str, list, int, str]] = []
-        backend_name_set: set[str] = set()
         for backend in status.backends:
-            backend_name = (backend.name or "").strip() or "未命名后端"
-            backend_name_set.add(backend_name)
-            backend_players = grouped.pop(backend_name, [])
+            backend_id = (backend.id or backend.name or "").strip()
+            backend_name = (
+                (backend.display_name or backend.name or backend_id).strip()
+                or "未命名后端"
+            )
+            backend_players = grouped.pop(backend_id, []) if backend_id else []
+            if not backend_players and backend.name and backend.name != backend_id:
+                backend_players = grouped.pop(backend.name, [])
             backend_total = (
                 backend.online_players
                 if backend.online_players > 0
                 else len(backend_players)
             )
-            cards.append((backend_name, backend_players, backend_total, backend_name))
+            cards.append(
+                (backend_name, backend_players, backend_total, backend_id or backend_name)
+            )
 
         # 兜底：处理状态未上报但玩家数据里出现的后端名
         for extra_backend, extra_players in grouped.items():
@@ -883,11 +890,13 @@ class CommandHandler:
         if not status or not status.is_proxy or not status.backends:
             return server_label
 
-        backend_map = {
-            (b.name or "").strip().lower(): (b.name or "").strip()
-            for b in status.backends
-            if (b.name or "").strip()
-        }
+        backend_map: dict[str, str] = {}
+        for backend in status.backends:
+            label = (backend.display_name or backend.name or backend.id or "").strip()
+            for key in (backend.id, backend.name, backend.display_name):
+                normalized = (key or "").strip().lower()
+                if normalized:
+                    backend_map[normalized] = label
 
         candidate = (getattr(player, "server", "") or "").strip()
         if candidate and candidate.lower() in backend_map:
@@ -948,7 +957,7 @@ class CommandHandler:
             if server.server_info and server.server_info.name
             else server.server_id
         )
-        return [CmdTarget(label=name, server=server, target_server=None)]
+        return [CmdTarget(label=name, server=server, target_server_id=None)]
 
     async def _build_proxy_targets(self, server) -> list[CmdTarget]:
         """Build target list for a proxy server: [proxy itself, backend1, backend2, ...]"""
@@ -958,15 +967,17 @@ class CommandHandler:
         proxy_label = info.name if info and info.name else server.server_id
         targets.append(
             CmdTarget(
-                label=f"{proxy_label} (代理端)", server=server, target_server=None
+                label=f"{proxy_label} (代理端)", server=server, target_server_id=None
             )
         )
         # Add backends
         if info and info.backends:
             for b in info.backends:
-                if b.name:
+                target_id = b.id or b.name
+                if target_id:
+                    label = b.display_name or b.name or target_id
                     targets.append(
-                        CmdTarget(label=b.name, server=server, target_server=b.name)
+                        CmdTarget(label=label, server=server, target_server_id=target_id)
                     )
         return targets
 
