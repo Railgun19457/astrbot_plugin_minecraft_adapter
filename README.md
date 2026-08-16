@@ -5,8 +5,10 @@
 ![:name](https://count.getloli.com/@astrbot_plugin_minecraft_adapter?name=astrbot_plugin_minecraft_adapter&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
 
 > [!note]
-> 孪生项目:[AstrBot Adapter](https://github.com/railgun19457/AstrBotAdapter)
-> Minecraft插件，提供`WebSocket Server`和`REST API`，支持bukkit/paper/folia/velocity等常见插件服
+> 孪生项目:  
+> [AstrBot Adapter(插件版 支持bukkit/paper/folia/velocity)](https://github.com/railgun19457/AstrBotAdapter)  
+> [AstrBotAdapter_Forge](https://github.com/OMSociety/AstrBotAdapter_Forge)  
+
 
 ## 主要功能
 - 群服互通，支持将mc服务器与其他连接到AstrBot的平台互通消息
