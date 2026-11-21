@@ -14,16 +14,11 @@ from astrbot.api.platform import (
 )
 from astrbot.core.platform.astr_message_event import MessageSesion
 
-from ..core.models import (
-    ChatMode,
-    MCMessage,
-    ServerConfig,
-)
-from ..core.models import (
-    MessageType as MCMessageType,
-)
+from ..core.config import ServerConfig
+from ..core.protocol.constants import Op
+from ..core.protocol.frame import Frame
 from ..core.server_manager import ServerConnection
-from .event import MCMessageEvent
+from .event import MinecraftMessageEvent
 
 
 def _extract_text(message_chain: MessageChain) -> str:
@@ -72,19 +67,14 @@ class MCPlatformAdapter(Platform):
 
         if getattr(msg_type, "value", str(msg_type)) == "FriendMessage":
             # 私聊给特定玩家
-            await self.server_connection.ws_client.send_chat_response(
-                reply_to="",
-                target_type="PLAYER",
-                chat_mode="PRIVATE",
-                content=content,
+            await self.server_connection.client.send_private_message(
                 player_uuid=identifier,
+                player_name="",
+                content=content,
             )
         else:
-            # 广播消息 (群聊消息或其他类型)
-            await self.server_connection.ws_client.send_chat_response(
-                reply_to="",
-                target_type="BROADCAST",
-                chat_mode="GROUP",
+            await self.server_connection.client.reply_to_ai(
+                reply_to_message_id=f"session:{self.server_config.server_id}:{identifier}",
                 content=content,
             )
 
@@ -106,30 +96,34 @@ class MCPlatformAdapter(Platform):
         if hasattr(self, "_stop_event"):
             self._stop_event.set()
 
-    async def handle_chat_request(self, msg: MCMessage):
-        """处理来自 Minecraft 的聊天请求"""
+    async def handle_ai_request(self, frame: Frame):
+        """Convert a Version 3 AI request event into an AstrBot event."""
         if not self.server_config.enable_ai_chat:
             return
-
-        if msg.type != MCMessageType.CHAT_REQUEST:
+        if frame.op not in {Op.AI_GROUP_REQUEST.value, Op.AI_PRIVATE_REQUEST.value}:
             return
-
-        if not msg.source:
+        payload = frame.payload
+        player = payload.get("player")
+        message = payload.get("message")
+        hint = payload.get("conversation_hint")
+        if (
+            not isinstance(player, dict)
+            or not isinstance(message, dict)
+            or not isinstance(hint, dict)
+        ):
             return
-
-        payload = msg.payload
-        chat_mode_str = payload.get("chatMode", "GROUP")
-        chat_mode = ChatMode(chat_mode_str)
-        content = payload.get("content", "")
-
-        player_uuid = msg.source.player_uuid
-        player_name = msg.source.player_name
+        private = frame.op == Op.AI_PRIVATE_REQUEST.value
+        content = str(message.get("plain_text") or message.get("content") or "")
+        player_uuid = str(player.get("uuid") or "")
+        player_name = str(player.get("display_name") or player.get("name") or "")
+        if not content or not player_uuid:
+            return
 
         # 创建 AstrBotMessage
         abm = AstrBotMessage()
 
         # 根据聊天模式设置消息类型
-        if chat_mode == ChatMode.PRIVATE:
+        if private:
             abm.type = MessageType.FRIEND_MESSAGE
             abm.session_id = player_uuid
         else:
@@ -138,30 +132,31 @@ class MCPlatformAdapter(Platform):
             abm.session_id = "Server"
 
         abm.self_id = self.server_config.server_id
-        abm.message_id = msg.id
+        abm.message_id = str(message.get("message_id") or frame.id)
         abm.sender = MessageMember(user_id=player_uuid, nickname=player_name)
-        if chat_mode == ChatMode.GROUP:
+        if not private:
             abm.message = [At(qq=abm.self_id), Plain(text=content)]
         else:
             abm.message = [Plain(text=content)]
         abm.message_str = content
-        abm.raw_message = msg.payload
+        abm.raw_message = payload
 
         # 创建事件
-        event = MCMessageEvent(
+        event = MinecraftMessageEvent(
             message_str=content,
             message_obj=abm,
             platform_meta=self.meta(),
             session_id=abm.session_id,
             server_connection=self.server_connection,
-            chat_mode=chat_mode,
-            request_id=msg.id,
+            private=private,
+            request_id=str(message.get("message_id") or frame.id),
             player_uuid=player_uuid,
+            player_name=player_name,
         )
 
         # 将事件提交到队列
         self.commit_event(event)
         logger.debug(
             f"[MC-{self.server_config.server_id}] "
-            f"来自 {player_name} 的聊天请求: {content[:50]}..."
+            f"AI request from {player_name}: {content[:50]}..."
         )

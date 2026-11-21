@@ -4,7 +4,6 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Plain
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 
-from ..core.models import ChatMode
 from ..core.server_manager import ServerConnection
 
 
@@ -17,8 +16,8 @@ def _extract_text(message_chain: MessageChain) -> str:
     )
 
 
-class MCMessageEvent(AstrMessageEvent):
-    """用于 Minecraft 平台的消息事件"""
+class MinecraftMessageEvent(AstrMessageEvent):
+    """AstrBot event backed by a Version 3 Minecraft AI request."""
 
     def __init__(
         self,
@@ -27,15 +26,17 @@ class MCMessageEvent(AstrMessageEvent):
         platform_meta: PlatformMetadata,
         session_id: str,
         server_connection: ServerConnection,
-        chat_mode: ChatMode,
+        private: bool,
         request_id: str,
         player_uuid: str,
+        player_name: str,
     ):
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.server_connection = server_connection
-        self.chat_mode = chat_mode
+        self.private = private
         self.request_id = request_id
         self.player_uuid = player_uuid
+        self.player_name = player_name
 
     async def send(self, message: MessageChain):
         """将响应消息发送回 Minecraft"""
@@ -43,16 +44,11 @@ class MCMessageEvent(AstrMessageEvent):
         if not content:
             return
 
-        # 根据聊天模式确定目标类型
-        target_type = "BROADCAST" if self.chat_mode == ChatMode.GROUP else "PLAYER"
-
-        # 通过 WebSocket 发送响应
-        await self.server_connection.ws_client.send_chat_response(
-            reply_to=self.request_id,
-            target_type=target_type,
-            chat_mode=self.chat_mode.value,
+        await self.server_connection.client.reply_to_ai(
+            reply_to_message_id=self.request_id,
             content=content,
-            player_uuid=self.player_uuid if self.chat_mode == ChatMode.PRIVATE else "",
+            private_player_uuid=self.player_uuid if self.private else "",
+            private_player_name=self.player_name if self.private else "",
         )
 
         await super().send(message)

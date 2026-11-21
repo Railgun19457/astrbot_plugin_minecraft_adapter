@@ -14,7 +14,11 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from .core.models import MCMessage, MessageType, ServerConfig, ServerInfo
+from .core.auth.identity_store import IdentityStore
+from .core.config import ConfigError, ServerConfig
+from .core.protocol.constants import Op
+from .core.protocol.frame import Frame
+from .core.protocol.payloads import ServerInfo
 from .core.server_manager import ServerManager
 from .handlers.commands import CommandHandler
 from .platform.adapter import MCPlatformAdapter
@@ -27,7 +31,7 @@ from .services.renderer import InfoRenderer
     "astrbot_plugin_minecraft_adapter",
     "AstrBot",
     "Minecraft服务器适配器插件，支持AI聊天、消息互通、服务器管理",
-    "1.0.0",
+    "3.0.0",
     "https://github.com/AstrBotDevs/astrbot_plugin_minecraft_adapter",
 )
 class MinecraftAdapterPlugin(Star):
@@ -47,7 +51,8 @@ class MinecraftAdapterPlugin(Star):
         self._plugin_data_path = plugin_data_path
 
         # 初始化服务
-        self.server_manager = ServerManager()
+        self.identity_store = IdentityStore(plugin_data_path)
+        self.server_manager = ServerManager(self.identity_store)
         self.binding_service = BindingService(plugin_data_path)
         self.message_bridge = MessageBridge(context, self.server_manager)
 
@@ -62,7 +67,7 @@ class MinecraftAdapterPlugin(Star):
         self.command_handler: CommandHandler | None = None
 
         # 设置消息处理器
-        self.server_manager.set_message_handler(self._on_server_message)
+        self.server_manager.set_event_handler(self._on_server_event)
         self.server_manager.set_connect_handler(self._on_server_connect)
         self.server_manager.set_disconnect_handler(self._on_server_disconnect)
 
@@ -109,15 +114,21 @@ class MinecraftAdapterPlugin(Star):
             if not server_data.get("enabled", True):
                 continue
 
-            config = ServerConfig.from_dict(server_data)
-            if not config.server_id:
-                logger.warning("[MC Adapter] 跳过 ID 为空的服务器")
+            try:
+                config = ServerConfig.from_dict(server_data)
+            except ConfigError as exc:
+                logger.error(
+                    "[MC Adapter] Ignoring invalid V3 server configuration: %s", exc
+                )
                 continue
 
             self._server_configs[config.server_id] = config
 
             # 将服务器添加到管理器
-            self.server_manager.add_server(config)
+            if not self.server_manager.add_server(config):
+                self._server_configs.pop(config.server_id, None)
+                logger.error("[MC Adapter] Duplicate server ID: %s", config.server_id)
+                continue
 
             # 注册到消息桥接
             self.message_bridge.register_server(config)
@@ -154,41 +165,26 @@ class MinecraftAdapterPlugin(Star):
             f"[MC Adapter] 插件已初始化，配置了 {len(self._server_configs)} 个服务器"
         )
 
-    async def _on_server_message(self, server_id: str, msg: MCMessage):
-        """处理来自 MC 服务器的消息"""
+    async def _on_server_event(self, server_id: str, frame: Frame):
+        """Dispatch a validated Version 3 server event."""
         config = self._server_configs.get(server_id)
         if not config:
             return
 
-        logger.debug(f"[MC-{server_id}] 收到消息类型: {msg.type}")
+        logger.debug("[MC-%s] Received V3 event: %s", server_id, frame.op)
 
-        if msg.type == MessageType.CHAT_REQUEST:
-            payload = msg.payload or {}
-            chat_mode = payload.get("chatMode", "GROUP")
-            content = payload.get("content", "")
-            source_server = (
-                msg.source.server_name if msg.source and msg.source.server_name else ""
-            )
-            source_player = (
-                msg.source.player_name if msg.source and msg.source.player_name else ""
-            )
-            source_label = source_server or server_id
-            logger.info(
-                f"[MC-{server_id}] 收到AI聊天消息: {source_label}"
-                f"/{source_player} -> {content} [{chat_mode}]"
-            )
-            # AI 聊天请求 - 转发到平台适配器
+        if frame.op in {Op.AI_GROUP_REQUEST.value, Op.AI_PRIVATE_REQUEST.value}:
             adapter = self._adapters.get(server_id)
             if adapter:
-                await adapter.handle_chat_request(msg)
+                await adapter.handle_ai_request(frame)
+            return
 
-        elif msg.type in (
-            MessageType.MESSAGE_FORWARD,
-            MessageType.PLAYER_JOIN,
-            MessageType.PLAYER_QUIT,
-        ):
-            # 转发到外部会话
-            await self.message_bridge.handle_mc_message(server_id, msg)
+        if frame.op in {
+            Op.CHAT_PLAYER.value,
+            Op.PLAYER_JOIN.value,
+            Op.PLAYER_LEAVE.value,
+        }:
+            await self.message_bridge.handle_server_event(server_id, frame)
 
     async def _on_server_connect(self, server_id: str, info: ServerInfo):
         """处理服务器连接"""

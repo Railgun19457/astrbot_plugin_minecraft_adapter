@@ -1,2 +1,4 @@
 aiohttp>=3.9.0
 Pillow>=10.0.0
+cryptography>=44.0.3
+srp==1.0.22

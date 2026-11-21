@@ -8,7 +8,9 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Plain
 
-from ..core.models import MCMessage, MessageType, ServerConfig
+from ..core.config import ServerConfig
+from ..core.protocol.constants import Op
+from ..core.protocol.frame import Frame
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
@@ -62,21 +64,18 @@ class MessageBridge:
                         if sid != server_id
                     ]
 
-    async def handle_mc_message(self, server_id: str, msg: MCMessage) -> bool:
-        """处理来自 MC 服务器的消息并转发到目标会话
-
-        如果消息被转发则返回 True。
-        """
+    async def handle_server_event(self, server_id: str, frame: Frame) -> bool:
+        """Forward a Version 3 chat or player lifecycle event to AstrBot."""
         config = self._server_configs.get(server_id)
         if not config:
             return False
 
-        # 检查是否已启用转发
-        if msg.type == MessageType.MESSAGE_FORWARD:
+        payload = frame.payload
+        if frame.op == Op.CHAT_PLAYER.value:
             if not config.forward_chat_to_astrbot:
                 return False
-            # Suppress echo: if this message was recently forwarded FROM external
-            content = msg.payload.get("content", "")
+            message = payload.get("message")
+            content = message.get("plain_text", "") if isinstance(message, dict) else ""
             echo_key = (server_id, content)
             now = time.time()
             if echo_key in self._recently_forwarded:
@@ -87,7 +86,7 @@ class MessageBridge:
                     del self._recently_forwarded[echo_key]
                     return False
                 del self._recently_forwarded[echo_key]
-        elif msg.type in (MessageType.PLAYER_JOIN, MessageType.PLAYER_QUIT):
+        elif frame.op in {Op.PLAYER_JOIN.value, Op.PLAYER_LEAVE.value}:
             if not config.forward_join_leave_to_astrbot:
                 return False
         else:
@@ -99,7 +98,7 @@ class MessageBridge:
             return False
 
         # 格式化消息内容
-        content = self._format_mc_message(msg, config)
+        content = self._format_server_event(frame, config)
         if not content:
             return False
 
@@ -109,39 +108,35 @@ class MessageBridge:
 
         return True
 
-    def _format_mc_message(self, msg: MCMessage, config: ServerConfig) -> str:
-        """
-        格式化 MC 消息以转发到外部平台。
-
-        参数:
-            msg: 要格式化的 Minecraft 消息
-            config: 包含格式模板的服务器配置
-
-        返回:
-            准备好转发的格式化消息字符串，如果消息类型不支持转发，则为空字符串。
-
-        注意:
-            支持 MESSAGE_FORWARD、PLAYER_JOIN 和 PLAYER_QUIT 消息类型。
-        """
-        if msg.type == MessageType.MESSAGE_FORWARD:
-            player_name = msg.source.player_name if msg.source else "未知"
-            content = msg.payload.get("content", "")
+    def _format_server_event(self, frame: Frame, config: ServerConfig) -> str:
+        """Format a validated V3 server event for an external session."""
+        payload = frame.payload
+        player = (
+            payload.get("player") if isinstance(payload.get("player"), dict) else {}
+        )
+        player_name = str(player.get("display_name") or player.get("name") or "未知")
+        if frame.op == Op.CHAT_PLAYER.value:
+            message = (
+                payload.get("message")
+                if isinstance(payload.get("message"), dict)
+                else {}
+            )
+            content = str(message.get("plain_text") or message.get("content") or "")
             return config.forward_chat_format.format(
                 player=player_name, message=content
             )
 
-        if msg.type in (MessageType.PLAYER_JOIN, MessageType.PLAYER_QUIT):
-            player_name = msg.source.player_name if msg.source else "未知"
-            server_name = msg.source.server_name if msg.source else ""
-            online = msg.payload.get("onlineCount", 0)
-            max_players = msg.payload.get("maxPlayers", 0)
+        if frame.op in {Op.PLAYER_JOIN.value, Op.PLAYER_LEAVE.value}:
+            server_name = str(player.get("server_id") or "")
+            online = payload.get("online_count", 0)
+            max_players = payload.get("max_players", 0)
             count_part = f" ({online}/{max_players})" if max_players else ""
             server_part = f" {server_name}" if server_name else "服务器"
 
-            if msg.type == MessageType.PLAYER_JOIN:
+            if frame.op == Op.PLAYER_JOIN.value:
                 return f"🟢 {player_name} 加入了{server_part}{count_part}"
 
-            reason = msg.payload.get("reason", "QUIT")
+            reason = payload.get("reason", "QUIT")
             reason_text = {
                 "QUIT": "离开",
                 "KICK": "被踢出",
@@ -211,10 +206,12 @@ class MessageBridge:
             # 发送到 MC 服务器
             server = self.server_manager.get_server(server_id)
             if server and server.connected:
-                success = await server.ws_client.send_incoming_message(
+                success = await server.client.send_external_message(
                     platform=platform_name,
                     user_id=sender_id,
                     user_name=sender_name,
+                    conversation_id=umo,
+                    conversation_type=self._conversation_type(umo),
                     content=content,
                 )
 
@@ -325,6 +322,12 @@ class MessageBridge:
             if config.target_sessions and umo in config.target_sessions:
                 result.append(server_id)
         return result
+
+    @staticmethod
+    def _conversation_type(umo: str) -> str:
+        """Extract the AstrBot unified message origin's message type safely."""
+        parts = umo.split(":", 2)
+        return parts[1] if len(parts) > 1 else "unknown"
 
     def strip_color_codes(self, text: str) -> str:
         """从文本中移除 Minecraft 颜色代码"""

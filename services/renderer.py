@@ -16,7 +16,12 @@ from PIL import Image, ImageDraw, ImageFont
 from astrbot.api import logger
 
 if TYPE_CHECKING:
-    from ..core.models import PlayerDetail, PlayerInfo, ServerInfo, ServerStatus
+    from ..core.protocol.payloads import (
+        PlayerDetail,
+        PlayerInfo,
+        ServerInfo,
+        ServerStatus,
+    )
 
 
 @dataclass

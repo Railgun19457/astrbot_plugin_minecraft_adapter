@@ -6,7 +6,7 @@
 
 > [!note]
 > 孪生项目:[AstrBot Adapter](https://github.com/railgun19457/AstrBotAdapter)
-> Minecraft插件，提供`WebSocket Server`和`REST API`，支持bukkit/paper/folia/velocity等常见插件服
+> 配套 Minecraft 端插件提供 Version 3 安全 WebSocket 协议，支持 Bukkit、Paper、Folia 和 Velocity。
 
 ## 主要功能
 - 群服互通，支持将mc服务器与其他连接到AstrBot的平台互通消息
@@ -31,7 +31,12 @@
  
 ### 服务器连接信息
   - 服务器ID - 用于区分不同服务器
-  - 服务器地址、端口、认证token - 用于连接指定mc服务器
+  - **安全 WebSocket 地址** - 填写 `wss://主机/astrbot`。仅 `localhost`、`127.0.0.1` 和 `[::1]` 可使用 `ws://`；远程连接必须经 TLS 反向代理或认证 VPN。
+  - **目标服务端角色** - 独立服选择 `standalone`，Velocity 入口选择 `velocity`。
+  - **首次配对** - 在 Java 端创建一次性配对码后，将 `pairing_id` 与 `pairing_code` 一起填入。首次认证使用 SRP-6a；成功后插件保存双方 Ed25519 公钥绑定，后续自动进行双向签名认证。
+  - **配对后处理** - 成功后插件只在内存中清除配对码；请从持久化配置中手动删除 `pairing_id` 与 `pairing_code`。若服务端密钥变更或需更换目标端点，删除该端点的本地 trust record 后再重新配对；不要删除整个插件数据目录，以免无意更换 AstrBot 身份。
+  - **版本与能力** - Java 端必须支持协议 `astrbot-minecraft` v1，并至少声明 `core.v1`、`auth.ed25519.v1` 和 `auth.srp6a-pairing.v1`；聊天、玩家、命令与 AI 功能还分别需要其对应的 `*.v1` capability。
+  - 不再支持旧版地址、端口、Token、REST API 或 WebSocket query token 配置。
 ### 消息转发配置
   - 聊天消息格式为，消息发送到其他平台时（如QQ），使用的格式，支持占位符`{player}`和`{message}`，代表发送者游戏ID和消息内容
   - **目标会话** 消息转发和消息监听的目标会话，使用会话umo区分，可通过sid指令获取，**这个配置标志着MC服务器和群聊的互相绑定关系**，群聊中获取mc服务器信息和执行指令等，需要服务器和会话绑定
@@ -51,6 +56,11 @@
       - 自定义参数将用户输入的坐标参数传递到了实际指令中，{sender}参数则提供了tp的游戏ID
   
 ## 更新日志
+### v3.0.0
+- 迁移至 Version 3 Frame 协议；移除 Token、REST API 和 URL query 认证。
+- 首次连接使用 SRP-6a 配对码认证，后续使用绑定的 Ed25519 密钥双向认证。
+- 默认要求远程连接使用 `wss://`，并使用单一认证 WebSocket 承载消息、状态查询和命令。
+
 ### v2.0.2 (2026-2-23)
 - 将官方t2i改为本地pillow渲染
 - 更新渲染模板

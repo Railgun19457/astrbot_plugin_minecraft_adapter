@@ -1,7 +1,7 @@
 name: astrbot_plugin_minecraft_adapter
 display_name: Minecraft适配器
 desc: 连接到 Minecraft 插件服务器，实现消息互通和服务器管理
-version: 2.0.2
+version: 3.0.0
 author: Railgun19457
-repo: https://github.com/railgun19457/astrbot_plugin_minecraft_adapter
+repo: https://github.com/Railgun19457/astrbot_plugin_minecraft_adapter
 astrbot_version: ">=4.10.4"

@@ -1,38 +1,10 @@
-# Minecraft 适配器的核心模块
-from .models import (
-    ChatMode,
-    LogEntry,
-    MCMessage,
-    MCMessageSource,
-    MCMessageTarget,
-    MessageType,
-    PlayerDetail,
-    PlayerInfo,
-    ServerConfig,
-    ServerInfo,
-    ServerStatus,
-    SourceType,
-    TargetType,
-)
-from .rest_client import RestClient
-from .server_manager import ServerManager
-from .ws_client import WebSocketClient
+"""Core primitives for the Minecraft adapter plugin."""
+
+from .config import ConfigError, ReconnectConfig, ServerConfig, canonical_endpoint_url
 
 __all__ = [
-    "MessageType",
-    "SourceType",
-    "TargetType",
-    "ChatMode",
-    "ServerInfo",
-    "PlayerInfo",
-    "PlayerDetail",
-    "MCMessage",
-    "MCMessageSource",
-    "MCMessageTarget",
+    "ConfigError",
+    "ReconnectConfig",
     "ServerConfig",
-    "ServerStatus",
-    "LogEntry",
-    "WebSocketClient",
-    "RestClient",
-    "ServerManager",
+    "canonical_endpoint_url",
 ]

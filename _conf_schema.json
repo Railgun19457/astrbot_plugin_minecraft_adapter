@@ -27,23 +27,68 @@
                 "hint": "用于区分不同服务器的唯一标识，将用于UMO和指令参数",
                 "default": "my_server"
               },
-              "host": {
+              "display_name": {
                 "type": "string",
-                "description": "服务器地址",
-                "hint": "AstrbotAdaptor插件所在服务器的IP或域名",
-                "default": "localhost"
-              },
-              "port": {
-                "type": "int",
-                "description": "服务器端口",
-                "hint": "AstrbotAdaptor插件配置的端口，默认8765",
-                "default": 8765
-              },
-              "token": {
-                "type": "string",
-                "description": "认证 Token",
-                "hint": "从 AstrbotAdaptor 插件配置中获取的认证令牌",
+                "description": "显示名称",
+                "hint": "仅用于 AstrBot 中的展示，不参与认证",
                 "default": ""
+              },
+              "url": {
+                "type": "string",
+                "description": "安全 WebSocket 地址",
+                "hint": "必须为 wss://主机/astrbot。仅 localhost、127.0.0.1 或 [::1] 可使用 ws://；远程部署必须通过 TLS 反向代理或认证 VPN。",
+                "default": "wss://mc.example.com/astrbot"
+              },
+              "expected_role": {
+                "type": "string",
+                "description": "目标服务端角色",
+                "hint": "独立服务端选 standalone，Velocity 入口选 velocity。不要填写 backend。",
+                "options": ["standalone", "velocity"],
+                "default": "standalone"
+              },
+              "pairing_id": {
+                "type": "string",
+                "description": "首次配对 ID",
+                "hint": "首次配对时，与 Java 服务端 /astrbot auth create 输出的 pairing_id 一起填写。已建立信任后可留空。",
+                "default": ""
+              },
+              "pairing_code": {
+                "type": "string",
+                "description": "首次配对码",
+                "hint": "敏感值。必须与 pairing_id 一起填写；配对后会在运行内存中丢弃，配置中如仍保留不会被回显。",
+                "default": ""
+              },
+              "reconnect": {
+                "description": "重连策略",
+                "type": "object",
+                "items": {
+                  "initial_delay_ms": {
+                    "type": "int",
+                    "description": "初始重连间隔（毫秒）",
+                    "default": 1000
+                  },
+                  "max_delay_ms": {
+                    "type": "int",
+                    "description": "最大重连间隔（毫秒）",
+                    "default": 60000
+                  },
+                  "jitter_ratio": {
+                    "type": "float",
+                    "description": "重连抖动比例",
+                    "hint": "0 到 1 之间，避免多服务器同时重连。",
+                    "default": 0.2
+                  }
+                }
+              },
+              "request_timeout_ms": {
+                "type": "int",
+                "description": "请求超时（毫秒）",
+                "default": 10000
+              },
+              "heartbeat_interval_ms": {
+                "type": "int",
+                "description": "应用层心跳间隔（毫秒）",
+                "default": 30000
               }
             }
           },

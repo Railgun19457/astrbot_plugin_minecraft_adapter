@@ -383,13 +383,10 @@ class CommandHandler:
             if server.server_info and server.server_info.name
             else server.server_id
         )
-        info, err = await server.rest_client.get_server_info()
-        if not info:
-            return [], f"❌ [{server_label}] 获取服务器信息失败: {err}"
-
-        status, err = await server.rest_client.get_server_status()
-        if not status:
-            return [], f"❌ [{server_label}] 获取服务器状态失败: {err}"
+        try:
+            info, status = await server.client.get_server_status()
+        except RuntimeError as exc:
+            return [], f"❌ [{server_label}] 获取服务器状态失败: {exc}"
 
         cards: list[tuple[str, object, object]] = [(server_label, info, status)]
         if status.is_proxy and status.backends:
@@ -522,8 +519,9 @@ class CommandHandler:
 
         cards: list[tuple[str, object]] = []
         for server in online_servers:
-            player, _ = await server.rest_client.get_player_by_name(player_id)
-            if not player:
+            try:
+                player = await server.client.get_player(player_id)
+            except RuntimeError:
                 continue
             player_server_name = await self._resolve_player_card_server_name(
                 server, player
@@ -553,9 +551,10 @@ class CommandHandler:
     async def _do_player(self, event: AstrMessageEvent, server, player_id: str):
         """Execute player detail query on a resolved server"""
         server_label = self._server_label(server)
-        player, err = await server.rest_client.get_player_by_name(player_id)
-        if not player:
-            yield event.plain_result(f"❌ [{server_label}] 获取玩家信息失败: {err}")
+        try:
+            player = await server.client.get_player(player_id)
+        except RuntimeError as exc:
+            yield event.plain_result(f"❌ [{server_label}] 获取玩家信息失败: {exc}")
             return
 
         config = self.get_server_config(server.server_id)
@@ -703,15 +702,32 @@ class CommandHandler:
         No auth/permission checks here. Callers are responsible for
         cmd_enabled and whitelist/blacklist checks before calling.
         """
-        success, output, _ = await server.rest_client.execute_command(
-            command, target_server=target_server
-        )
+        requested_by = {
+            "type": "external_user",
+            "platform": event.get_platform_name() or "unknown",
+            "id": event.get_sender_id() or "unknown",
+            "name": event.get_sender_name() or "",
+            "display_name": event.get_sender_name() or "",
+        }
+        try:
+            result = await server.client.execute_command(
+                command,
+                requested_by=requested_by,
+                target_server=target_server,
+            )
+        except RuntimeError as exc:
+            yield event.plain_result(f"❌ 指令执行失败: {exc}")
+            return
 
         target_label = f" [{target_server}]" if target_server else ""
-        if success:
-            yield event.plain_result(f"✅{target_label} 指令执行成功\n{output}")
+        if result.get("accepted") and result.get("executed"):
+            yield event.plain_result(
+                f"✅{target_label} 指令执行成功\n{result.get('output', '')}"
+            )
         else:
-            yield event.plain_result(f"❌{target_label} 指令执行失败: {output}")
+            yield event.plain_result(
+                f"❌{target_label} 指令未执行: {result.get('output', '')}"
+            )
 
     async def handle_bind(self, event: AstrMessageEvent, player_id: str):
         """绑定用户到 MC 玩家"""
@@ -830,13 +846,17 @@ class CommandHandler:
     ) -> tuple[list[tuple[str, list, int, str]], str]:
         """将代理服后端映射为独立服务器卡片，和普通独立服同层级返回。"""
         server_label = self._server_label(server)
-        players, total, err = await server.rest_client.get_players()
-        if err:
-            return [], f"❌ [{server_label}] 获取玩家列表失败: {err}"
+        try:
+            players, total = await server.client.get_players()
+        except RuntimeError as exc:
+            return [], f"❌ [{server_label}] 获取玩家列表失败: {exc}"
         if total == 0 and players:
             total = len(players)
 
-        status, _ = await server.rest_client.get_server_status()
+        try:
+            _, status = await server.client.get_server_status()
+        except RuntimeError:
+            status = None
         if not status or not status.is_proxy or not status.backends:
             return [(server_label, players, total, server_label)], ""
 
@@ -879,7 +899,10 @@ class CommandHandler:
         """解析玩家详情卡片展示服务器名：优先后端服，独立服回退主服名。"""
         server_label = self._server_label(server)
 
-        status, _ = await server.rest_client.get_server_status()
+        try:
+            _, status = await server.client.get_server_status()
+        except RuntimeError:
+            status = None
         if not status or not status.is_proxy or not status.backends:
             return server_label
 
@@ -894,7 +917,10 @@ class CommandHandler:
             return backend_map[candidate.lower()]
 
         # 代理服场景下，玩家详情可能缺少server，回查players接口补齐
-        players, _, _ = await server.rest_client.get_players()
+        try:
+            players, _ = await server.client.get_players()
+        except RuntimeError:
+            players = []
         target_uuid = (getattr(player, "uuid", "") or "").strip().lower()
         target_name = (getattr(player, "name", "") or "").strip().lower()
         for p in players:
@@ -931,8 +957,11 @@ class CommandHandler:
         """Check if a server is in proxy (Velocity) mode by querying server info"""
         if server.server_info and server.server_info.is_proxy:
             return True
-        info, _ = await server.rest_client.get_server_info()
-        return info is not None and info.is_proxy
+        try:
+            info, _ = await server.client.get_server_status()
+        except RuntimeError:
+            return False
+        return info.is_proxy
 
     async def _build_server_targets(self, server) -> list[CmdTarget]:
         """Build target list for a single server, auto-detecting proxy mode.
@@ -952,7 +981,10 @@ class CommandHandler:
 
     async def _build_proxy_targets(self, server) -> list[CmdTarget]:
         """Build target list for a proxy server: [proxy itself, backend1, backend2, ...]"""
-        info, _ = await server.rest_client.get_server_info()
+        try:
+            info, _ = await server.client.get_server_status()
+        except RuntimeError:
+            info = None
         targets: list[CmdTarget] = []
         # Proxy itself is always a valid target
         proxy_label = info.name if info and info.name else server.server_id
