@@ -1,0 +1,7 @@
+name: astrbot_plugin_minecraft_adapter
+display_name: Minecraft 适配器
+desc: 连接 Minecraft 服务器，提供消息互通、查询和游戏内 AI
+version: 3.0.0-dev
+author: Railgun19457
+repo: https://github.com/Railgun19457/astrbot_plugin_minecraft_adapter
+astrbot_version: ">=4.30.0-beta.1"

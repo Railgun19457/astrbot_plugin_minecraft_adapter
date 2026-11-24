@@ -1,0 +1,167 @@
+{
+  "client_id": {"type": "string", "description": "AstrBot 节点 ID", "default": "astrbot-main"},
+  "text2image": {"type": "bool", "description": "用 Typst 渲染查询卡片", "hint": "对所有服务器生效。关闭后，状态、名单和玩家详情使用纯文本。", "default": true},
+  "llm_tools": {
+    "type": "object",
+    "description": "模型工具",
+    "items": {
+      "enabled_tools": {
+        "type": "list",
+        "description": "注册的工具",
+        "options": ["targets", "status", "player", "command"],
+        "labels": ["查询绑定的服务器列表", "查询服务器状态和在线玩家列表", "查询玩家信息", "执行服务器指令"],
+        "default": []
+      },
+      "cmd_white_black_list": {"type": "string", "description": "指令名单类型", "options": ["white", "black"], "labels": ["白名单", "黑名单"], "default": "white"},
+      "cmd_list": {"type": "list", "description": "指令名单", "hint": "用于模型工具的独立指令名单，填写指令名，例如 list、time。", "default": []}
+    }
+  },
+  "mc_servers": {
+    "type": "template_list",
+    "description": "MC 服务器列表",
+    "templates": {
+      "standalone": {
+        "name": "独立服（Paper / Folia / Fabric）",
+        "display_item": "server.server_id",
+        "items": {
+          "enabled": {"type": "bool", "description": "启用此服务器", "default": true},
+          "server": {
+            "type": "object",
+            "description": "服务器连接",
+            "items": {
+              "server_id": {"type": "string", "description": "服务器 ID", "default": "survival"},
+              "url": {"type": "string", "description": "WebSocket 地址", "default": "ws://127.0.0.1:8765/astrbot"},
+              "pairing_id": {"type": "string", "description": "首次配对 ID", "default": ""},
+              "pairing_code": {"type": "string", "description": "首次配对码", "obvious_hint": true, "default": ""}
+            }
+          },
+          "enable_ai_chat": {"type": "bool", "description": "启用游戏内 AI", "default": true},
+          "message": {
+            "type": "object",
+            "description": "消息转发",
+            "items": {
+              "target_sessions": {"type": "list", "description": "目标会话 UMO", "default": []},
+              "auto_forward_prefix": {"type": "string", "description": "群聊转游戏的前缀", "default": "*"},
+              "forward_chat_to_astrbot": {"type": "bool", "description": "转发游戏聊天至目标会话", "default": true},
+              "forward_chat_format": {"type": "string", "description": "聊天消息格式", "hint": "游戏发到平台。{player} 玩家名，{player_id} 玩家 UUID，{server} 服务器或代理/子服，{server_id} 入口 ID，{backend} 子服 ID，{message} 内容。", "default": "[{server}] {player}：{message}"},
+              "mark_option": {"type": "string", "description": "转发提醒方式", "hint": "有玩家收到平台消息后，给原消息贴表情。平台需支持原生表情回应。", "options": ["emoji", "none"], "labels": ["贴表情", "不提醒"], "default": "emoji"},
+              "forward_join_leave_to_astrbot": {"type": "bool", "description": "发送进服和退服通知", "default": false}
+            }
+          },
+          "cmd": {
+            "type": "object",
+            "description": "远程指令",
+            "items": {
+              "enabled": {"type": "bool", "description": "启用远程指令", "default": false},
+              "cmd_white_black_list": {"type": "string", "description": "指令名单类型", "options": ["white", "black"], "labels": ["白名单", "黑名单"], "default": "white"},
+              "cmd_list": {"type": "list", "description": "指令名单", "hint": "绑定会话内所有成员均可执行名单策略允许的指令。填写指令名，例如 list、time。", "default": []},
+              "admin_commands": {"type": "list", "description": "管理指令", "hint": "只允许管理员执行。填写指令名，例如 whitelist。", "default": []},
+              "admin_umos": {"type": "list", "description": "管理员 UMO 列表", "hint": "自动包含 AstrBot 管理员。额外填写的是会话 UMO；填写群聊 UMO 会授权该群内所有成员。", "default": []},
+              "custom_commands": {
+                "type": "list",
+                "description": "自定义指令",
+                "hint": "点「添加更多」逐条添加，或使用「批量导入」粘贴多行。每项一条映射，例如 时间 <&kind&><<>>time query {kind}。{sender} 取已绑定的游戏账号。",
+                "default": []
+              }
+            }
+          }
+        }
+      },
+      "velocity": {
+        "name": "Velocity 群组服",
+        "display_item": "server.server_id",
+        "items": {
+          "enabled": {"type": "bool", "description": "启用此服务器", "default": true},
+          "server": {
+            "type": "object",
+            "description": "代理连接",
+            "items": {
+              "server_id": {"type": "string", "description": "代理服务器 ID", "hint": "与 Velocity 上适配器的 node.id 一致。", "default": "network"},
+              "url": {"type": "string", "description": "WebSocket 地址", "default": "ws://127.0.0.1:8765/astrbot"},
+              "pairing_id": {"type": "string", "description": "首次配对 ID", "default": ""},
+              "pairing_code": {"type": "string", "description": "首次配对码", "obvious_hint": true, "default": ""}
+            }
+          },
+          "enable_ai_chat": {"type": "bool", "description": "启用游戏内 AI", "default": true},
+          "message": {
+            "type": "object",
+            "description": "消息转发",
+            "items": {
+              "target_sessions": {"type": "list", "description": "目标会话 UMO", "default": []},
+              "auto_forward_prefix": {"type": "string", "description": "群聊转游戏的前缀", "default": "*"},
+              "forward_chat_to_astrbot": {"type": "bool", "description": "转发游戏聊天至目标会话", "default": true},
+              "forward_chat_format": {"type": "string", "description": "聊天消息格式", "hint": "游戏发到平台。{player} 玩家名，{player_id} 玩家 UUID，{server} 代理/子服，{server_id} 代理 ID，{backend} 子服 ID，{message} 内容。", "default": "[{server}] {player}：{message}"},
+              "mark_option": {"type": "string", "description": "转发提醒方式", "hint": "有玩家收到平台消息后，给原消息贴表情。平台需支持原生表情回应。", "options": ["emoji", "none"], "labels": ["贴表情", "不提醒"], "default": "emoji"},
+              "forward_join_leave_to_astrbot": {"type": "bool", "description": "发送进服、换服和退服通知", "default": false}
+            }
+          },
+          "cmd": {
+            "type": "object",
+            "description": "远程指令",
+            "items": {
+              "enabled": {"type": "bool", "description": "启用远程指令", "default": false},
+              "cmd_white_black_list": {"type": "string", "description": "指令名单类型", "options": ["white", "black"], "labels": ["白名单", "黑名单"], "default": "white"},
+              "cmd_list": {"type": "list", "description": "指令名单", "hint": "绑定会话内所有成员均可执行名单策略允许的指令。填写指令名，例如 list、time。", "default": []},
+              "admin_commands": {"type": "list", "description": "管理指令", "hint": "只允许管理员执行。填写指令名，例如 whitelist。", "default": []},
+              "admin_umos": {"type": "list", "description": "管理员 UMO 列表", "hint": "自动包含 AstrBot 管理员。额外填写的是会话 UMO；填写群聊 UMO 会授权该群内所有成员。", "default": []},
+              "custom_commands": {
+                "type": "list",
+                "description": "自定义指令",
+                "hint": "点「添加更多」逐条添加，或使用「批量导入」粘贴多行。每项一条映射，例如 时间 <&kind&><<>>time query {kind}。{sender} 取已绑定的游戏账号。",
+                "default": []
+              }
+            }
+          }
+        }
+      },
+      "native": {
+        "name": "原生直连（Ping / Query / RCON）",
+        "display_item": "server.server_id",
+        "items": {
+          "enabled": {"type": "bool", "description": "启用此服务器", "default": true},
+          "server": {
+            "type": "object",
+            "description": "服务器连接",
+            "items": {
+              "server_id": {"type": "string", "description": "服务器 ID", "default": "vanilla"},
+              "host": {"type": "string", "description": "主机地址", "hint": "填写 IP 或主机名。RCON 请使用私网或本机地址。", "default": "127.0.0.1"},
+              "game_port": {"type": "int", "description": "游戏端口（TCP）", "default": 25565},
+              "query_port": {"type": "int", "description": "Query 端口（UDP）", "hint": "设置为 0 时关闭。需与服务端 query.port 一致。", "default": 0},
+              "rcon_port": {"type": "int", "description": "RCON 端口（TCP）", "hint": "设置为 0 时关闭。需与服务端 rcon.port 一致。", "default": 0},
+              "rcon_password": {"type": "string", "description": "RCON 密码", "secret": true, "default": ""}
+            }
+          },
+          "message": {
+            "type": "object",
+            "description": "消息转发",
+            "items": {
+              "target_sessions": {"type": "list", "description": "目标会话 UMO", "default": []},
+              "forward_chat_to_game": {"type": "bool", "description": "转发平台消息到游戏", "hint": "通过 RCON 向在线玩家发送系统消息。", "default": false},
+              "auto_forward_prefix": {"type": "string", "description": "群聊转游戏的前缀", "default": "*"},
+              "mark_option": {"type": "string", "description": "转发提醒方式", "hint": "向在线玩家发出消息后，给平台原消息贴表情。平台需支持原生表情回应。", "options": ["emoji", "none"], "labels": ["贴表情", "不提醒"], "default": "emoji"},
+              "forward_join_leave_to_astrbot": {"type": "bool", "description": "轮询名单并发送进退服通知", "hint": "需要启用 Query 或 RCON，间隔约 20 秒。", "default": false}
+            }
+          },
+          "cmd": {
+            "type": "object",
+            "description": "远程指令（RCON）",
+            "items": {
+              "enabled": {"type": "bool", "description": "启用远程指令", "default": false},
+              "cmd_white_black_list": {"type": "string", "description": "指令名单类型", "options": ["white", "black"], "labels": ["白名单", "黑名单"], "default": "white"},
+              "cmd_list": {"type": "list", "description": "指令名单", "hint": "绑定会话内所有成员均可执行名单策略允许的指令。填写指令名，例如 list、time。", "default": []},
+              "admin_commands": {"type": "list", "description": "管理指令", "hint": "只允许管理员执行。填写指令名，例如 whitelist。", "default": []},
+              "admin_umos": {"type": "list", "description": "管理员 UMO 列表", "hint": "自动包含 AstrBot 管理员。额外填写的是会话 UMO；填写群聊 UMO 会授权该群内所有成员。", "default": []},
+              "custom_commands": {
+                "type": "list",
+                "description": "自定义指令",
+                "hint": "每项一条映射，例如 在线<<>>list。游戏账号绑定占位符需要适配器接入。",
+                "default": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "default": []
+  }
+}
